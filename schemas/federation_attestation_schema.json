@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "evidence_digests": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "operator_sig": {
+      "type": "string"
+    },
+    "row_digest": {
+      "type": "string"
+    },
+    "snapshot_id": {
+      "type": "object"
+    },
+    "status": {
+      "enum": [
+        "admissible",
+        "suspect",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "sth_ref": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "snapshot_id",
+    "row_digest",
+    "status",
+    "evidence_digests",
+    "sth_ref",
+    "operator_sig"
+  ],
+  "type": "object"
+}

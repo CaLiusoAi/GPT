@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "genesis_sig_quorum": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 3,
+      "type": "array"
+    },
+    "genesis_timestamp_utc": {
+      "type": "string"
+    },
+    "genesis_version": {
+      "type": "string"
+    },
+    "lattice_crystals": {
+      "type": "object"
+    },
+    "max_operators": {
+      "minimum": 5,
+      "type": "integer"
+    },
+    "min_quorum": {
+      "minimum": 3,
+      "type": "integer"
+    },
+    "operators": {
+      "items": {
+        "type": "object"
+      },
+      "minItems": 5,
+      "type": "array"
+    },
+    "trust_assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "genesis_version",
+    "genesis_timestamp_utc",
+    "operators",
+    "min_quorum",
+    "max_operators",
+    "lattice_crystals",
+    "trust_assumptions",
+    "genesis_sig_quorum"
+  ],
+  "type": "object"
+}

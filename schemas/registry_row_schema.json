@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "compliance": {
+      "type": "object"
+    },
+    "evaluation_bindings": {
+      "type": "object"
+    },
+    "identity": {
+      "type": "object"
+    },
+    "ledger_append_proof": {
+      "type": "object"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "signatures": {
+      "type": "object"
+    },
+    "snapshot_id": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "snapshot_id",
+    "identity",
+    "evaluation_bindings",
+    "compliance",
+    "signatures"
+  ],
+  "type": "object"
+}
