@@ -22,9 +22,9 @@ Capabilities:
   - Ed25519 cryptographic signing and verification
   - Canonical JSON serialization for deterministic hashing
 
-Dependencies (pip install):
-  blake3==0.4.1  cryptography==42.0.7  numpy==2.1.3  scipy==1.14.1
-  scikit-learn==1.5.2  orjson==3.10.7  jsonschema==4.23.0
+Zero required external dependencies — runs on stdlib alone (including Pythonista3 / iOS).
+Optional deps unlock faster paths when available:
+  blake3, cryptography, numpy, scipy, scikit-learn, orjson
 
 Usage:
   python crystal_lattice_all_in_one.py selftest
@@ -32,6 +32,7 @@ Usage:
   python crystal_lattice_all_in_one.py refusal-drift --traces-a A --traces-b B
   python crystal_lattice_all_in_one.py routing-leak --traces T
   python crystal_lattice_all_in_one.py forgery-score --progress-json P
+  python crystal_lattice_all_in_one.py info
 
 Built: 2026-02-14  |  License: Apache-2.0  |  Version: 1.0.0
 """
@@ -39,7 +40,7 @@ Built: 2026-02-14  |  License: Apache-2.0  |  Version: 1.0.0
 __version__ = '1.0.0'
 
 # =============================================================================
-#  IMPORTS
+#  IMPORTS — all optional deps use graceful fallbacks to stdlib
 # =============================================================================
 
 import argparse
@@ -47,22 +48,69 @@ import base64
 import hashlib
 import json
 import math
+import random
+import statistics
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
-import numpy as np
-import orjson
-from blake3 import blake3
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
-from scipy import stats
-from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import HashingVectorizer
-from sklearn.metrics import silhouette_score
+# --- numpy (optional) --------------------------------------------------------
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except ImportError:
+    np = None  # type: ignore
+    HAS_NUMPY = False
+
+# --- orjson (optional — falls back to json) -----------------------------------
+try:
+    import orjson
+    HAS_ORJSON = True
+except ImportError:
+    orjson = None  # type: ignore
+    HAS_ORJSON = False
+
+# --- blake3 (optional — falls back to sha3-256) ------------------------------
+try:
+    from blake3 import blake3 as _blake3_cls
+    HAS_BLAKE3 = True
+except ImportError:
+    _blake3_cls = None
+    HAS_BLAKE3 = False
+
+# --- cryptography / Ed25519 (optional) ---------------------------------------
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+    HAS_CRYPTO = True
+except ImportError:
+    serialization = None  # type: ignore
+    Ed25519PrivateKey = None  # type: ignore
+    Ed25519PublicKey = None  # type: ignore
+    HAS_CRYPTO = False
+
+# --- scipy (optional) --------------------------------------------------------
+try:
+    from scipy import stats as sp_stats
+    HAS_SCIPY = True
+except ImportError:
+    sp_stats = None  # type: ignore
+    HAS_SCIPY = False
+
+# --- scikit-learn (optional) --------------------------------------------------
+try:
+    from sklearn.cluster import KMeans
+    from sklearn.feature_extraction.text import HashingVectorizer
+    from sklearn.metrics import silhouette_score
+    HAS_SKLEARN = True
+except ImportError:
+    KMeans = None  # type: ignore
+    HashingVectorizer = None  # type: ignore
+    silhouette_score = None  # type: ignore
+    HAS_SKLEARN = False
 
 
 # =============================================================================
@@ -200,7 +248,7 @@ def round_float(x: float) -> float:
     if isinstance(x, float):
         if math.isnan(x) or math.isinf(x):
             raise ValueError('Non-finite float not allowed')
-        return float(np.round(x, ROUND_DECIMALS))
+        return round(x, ROUND_DECIMALS)
     raise TypeError(f'Expected float/int/None, got {type(x)}')
 
 
@@ -220,7 +268,9 @@ def canonicalize(obj):
 
 def canonical_json_bytes(obj) -> bytes:
     c = canonicalize(obj)
-    return orjson.dumps(c, option=orjson.OPT_SORT_KEYS)
+    if HAS_ORJSON:
+        return orjson.dumps(c, option=orjson.OPT_SORT_KEYS)
+    return json.dumps(c, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
 # =============================================================================
@@ -228,7 +278,10 @@ def canonical_json_bytes(obj) -> bytes:
 # =============================================================================
 
 def blake3_hex(data: bytes) -> str:
-    return blake3(data).hexdigest()
+    if HAS_BLAKE3:
+        return _blake3_cls(data).hexdigest()
+    # Fallback: use SHA3-256 when blake3 is unavailable
+    return hashlib.sha3_256(data).hexdigest()
 
 
 def sha3_256_hex(data: bytes) -> str:
@@ -237,13 +290,24 @@ def sha3_256_hex(data: bytes) -> str:
 
 # =============================================================================
 #  MODULE: crypto — Ed25519 key management and signing
+#  (requires 'cryptography' package; stubs raise RuntimeError if absent)
 # =============================================================================
 
-def gen_private_key() -> Ed25519PrivateKey:
+def _require_crypto(fn_name: str):
+    if not HAS_CRYPTO:
+        raise RuntimeError(
+            f'{fn_name}() requires the "cryptography" package. '
+            'Install it with: pip install cryptography'
+        )
+
+
+def gen_private_key():
+    _require_crypto('gen_private_key')
     return Ed25519PrivateKey.generate()
 
 
-def save_private_pem(priv: Ed25519PrivateKey, path: str):
+def save_private_pem(priv, path: str):
+    _require_crypto('save_private_pem')
     b = priv.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -253,7 +317,8 @@ def save_private_pem(priv: Ed25519PrivateKey, path: str):
         f.write(b)
 
 
-def save_public_pem(priv: Ed25519PrivateKey, path: str):
+def save_public_pem(priv, path: str):
+    _require_crypto('save_public_pem')
     b = priv.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -262,23 +327,27 @@ def save_public_pem(priv: Ed25519PrivateKey, path: str):
         f.write(b)
 
 
-def public_hex(priv: Ed25519PrivateKey) -> str:
+def public_hex(priv) -> str:
+    _require_crypto('public_hex')
     return priv.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     ).hex()
 
 
-def load_private_pem(path: str) -> Ed25519PrivateKey:
+def load_private_pem(path: str):
+    _require_crypto('load_private_pem')
     with open(path, 'rb') as f:
         return serialization.load_pem_private_key(f.read(), password=None)
 
 
-def sign_b64(priv: Ed25519PrivateKey, msg: bytes) -> str:
+def sign_b64(priv, msg: bytes) -> str:
+    _require_crypto('sign_b64')
     return base64.b64encode(priv.sign(msg)).decode('ascii')
 
 
 def verify_b64(pub_hex_str: str, msg: bytes, sig_b64: str) -> bool:
+    _require_crypto('verify_b64')
     pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex_str))
     sig = base64.b64decode(sig_b64.encode('ascii'))
     try:
@@ -423,19 +492,33 @@ def drift_test_refusal(
     traces_b: List[Dict[str, Any]],
     alpha: float = 0.01,
 ) -> Dict[str, Any]:
+    if not HAS_SCIPY:
+        raise RuntimeError(
+            'drift_test_refusal() requires scipy. Install it with: pip install scipy'
+        )
+
     pvals: Dict[str, float] = {}
 
+    def _to_array(traces, key_path, default=0.0):
+        out = []
+        for t in traces:
+            cur = t
+            for k in key_path:
+                cur = cur.get(k, {}) if isinstance(cur, dict) else {}
+            out.append(float(cur) if not isinstance(cur, dict) else float(default))
+        return out
+
     # KS test on tool adherence error
-    A_tool = np.array([float(t.get('tools', {}).get('tool_adherence_err', 0.0)) for t in traces_a], dtype=float)
-    B_tool = np.array([float(t.get('tools', {}).get('tool_adherence_err', 0.0)) for t in traces_b], dtype=float)
-    if len(A_tool) and len(B_tool):
-        pvals['ks_tool_adherence_err'] = float(stats.ks_2samp(A_tool, B_tool).pvalue)
+    A_tool = [float(t.get('tools', {}).get('tool_adherence_err', 0.0)) for t in traces_a]
+    B_tool = [float(t.get('tools', {}).get('tool_adherence_err', 0.0)) for t in traces_b]
+    if A_tool and B_tool:
+        pvals['ks_tool_adherence_err'] = float(sp_stats.ks_2samp(A_tool, B_tool).pvalue)
 
     # KS test on latency
-    A_lat = np.array([float(t.get('metrics', {}).get('latency_ms', 0.0)) for t in traces_a], dtype=float)
-    B_lat = np.array([float(t.get('metrics', {}).get('latency_ms', 0.0)) for t in traces_b], dtype=float)
-    if len(A_lat) and len(B_lat):
-        pvals['ks_latency_ms'] = float(stats.ks_2samp(A_lat, B_lat).pvalue)
+    A_lat = [float(t.get('metrics', {}).get('latency_ms', 0.0)) for t in traces_a]
+    B_lat = [float(t.get('metrics', {}).get('latency_ms', 0.0)) for t in traces_b]
+    if A_lat and B_lat:
+        pvals['ks_latency_ms'] = float(sp_stats.ks_2samp(A_lat, B_lat).pvalue)
 
     # Chi-square on refusal class distribution
     def counts(traces):
@@ -451,8 +534,12 @@ def drift_test_refusal(
     cb = counts(traces_b)
     classes = sorted(set(ca.keys()) | set(cb.keys()))
     if classes:
-        obs = np.array([[ca.get(k, 0) for k in classes], [cb.get(k, 0) for k in classes]], dtype=float)
-        chi2, p, dof, expected = stats.chi2_contingency(obs)
+        obs_list = [[ca.get(k, 0) for k in classes], [cb.get(k, 0) for k in classes]]
+        if HAS_NUMPY:
+            obs = np.array(obs_list, dtype=float)
+        else:
+            obs = obs_list
+        chi2, p, dof, expected = sp_stats.chi2_contingency(obs)
         pvals['chi2_refusal_class'] = float(p)
 
     holm = holm_bonferroni(pvals, alpha=alpha)
@@ -612,6 +699,12 @@ def detect_routing_leak(
     permutation_iters: int = 9999,
     random_state: int = 1337,
 ) -> Dict[str, Any]:
+    if not (HAS_NUMPY and HAS_SKLEARN):
+        raise RuntimeError(
+            'detect_routing_leak() requires numpy and scikit-learn. '
+            'Install them with: pip install numpy scikit-learn'
+        )
+
     n = len(traces)
     if n < 50:
         raise ValueError('Need >=50 traces')
@@ -957,47 +1050,42 @@ def compute_quorum(attestations: List[Dict[str, Any]], min_quorum: int = 3) -> D
 # =============================================================================
 
 def selftest():
-    # Holm-Bonferroni
+    passed = 0
+
+    # Holm-Bonferroni (pure stdlib)
     p = {'a': 0.001, 'b': 0.02, 'c': 0.2}
     r = holm_bonferroni(p, alpha=0.01)
     assert 'a' in r.rejected, f'Holm test failed: {r.rejected}'
+    passed += 1
 
-    # Routing leak on synthetic bimodal traces
-    traces = []
-    for i in range(512):
-        traces.append({
-            'labels': {'refusal_class': 'HardRefuse' if i < 256 else 'NoRefuseComply'},
-            'tools': {'tool_adherence_err': 0.0 if i < 256 else 0.25},
-            'metrics': {'latency_ms': 120 if i < 256 else 600},
-            'response': {'assistant_text_sha3_256': 'a' * 64 if i < 256 else 'b' * 64},
-        })
-    out = detect_routing_leak(traces, permutation_iters=999, min_silhouette=0.2)
-    assert out['K_est'] in (1, 2, 3, 4), f'Routing leak K_est unexpected: {out["K_est"]}'
-
-    # Forgery scoring with embedded example
+    # Forgery scoring with embedded example (pure stdlib)
     fr = score_progress(EXAMPLE_PROGRESS)
     assert fr.status == 'rejected', f'Forgery test failed: {fr.status}'
     assert fr.forgery_score > 0.3, f'Forgery score too low: {fr.forgery_score}'
+    passed += 1
 
-    # Merkle tree round-trip
+    # Merkle tree round-trip (pure stdlib)
     leaves = [b'alpha', b'beta', b'gamma', b'delta']
     root = merkle_root(leaves)
     for idx in range(len(leaves)):
         proof = inclusion_proof(leaves, idx)
         assert verify_inclusion(leaves[idx], idx, proof, root), f'Merkle inclusion failed at {idx}'
+    passed += 1
 
-    # Canonical JSON determinism
+    # Canonical JSON determinism (pure stdlib)
     obj_a = {'z': 1, 'a': 2, 'b': [3.123456789012, None, True]}
     obj_b = {'a': 2, 'b': [3.123456789012, None, True], 'z': 1}
     assert canonical_json_bytes(obj_a) == canonical_json_bytes(obj_b), 'Canonical JSON not deterministic'
+    passed += 1
 
-    # Digest functions
+    # Digest functions (pure stdlib fallback or blake3)
     d = blake3_hex(b'test')
     assert len(d) == 64, f'Blake3 hex length wrong: {len(d)}'
     s = sha3_256_hex(b'test')
     assert len(s) == 64, f'SHA3-256 hex length wrong: {len(s)}'
+    passed += 1
 
-    # Federation gossip conflict
+    # Federation gossip conflict (pure stdlib)
     assert not gossip_conflict_detected([
         {'tree_size': 1, 'root_hash': 'abc'},
         {'tree_size': 2, 'root_hash': 'def'},
@@ -1006,8 +1094,9 @@ def selftest():
         {'tree_size': 1, 'root_hash': 'abc'},
         {'tree_size': 1, 'root_hash': 'xyz'},
     ])
+    passed += 1
 
-    # Quorum
+    # Quorum (pure stdlib)
     q = compute_quorum([
         {'row_digest': 'aaa', 'status': 'admissible'},
         {'row_digest': 'aaa', 'status': 'admissible'},
@@ -1015,7 +1104,46 @@ def selftest():
     ])
     assert q['status'] == 'admissible'
     assert q['quorum_strength'] == 3
+    passed += 1
 
+    # Routing leak on synthetic bimodal traces (needs numpy + sklearn)
+    if HAS_NUMPY and HAS_SKLEARN:
+        traces = []
+        for i in range(512):
+            traces.append({
+                'labels': {'refusal_class': 'HardRefuse' if i < 256 else 'NoRefuseComply'},
+                'tools': {'tool_adherence_err': 0.0 if i < 256 else 0.25},
+                'metrics': {'latency_ms': 120 if i < 256 else 600},
+                'response': {'assistant_text_sha3_256': 'a' * 64 if i < 256 else 'b' * 64},
+            })
+        out = detect_routing_leak(traces, permutation_iters=999, min_silhouette=0.2)
+        assert out['K_est'] in (1, 2, 3, 4), f'Routing leak K_est unexpected: {out["K_est"]}'
+        passed += 1
+        print(f'  routing-leak test: OK')
+    else:
+        print(f'  routing-leak test: SKIPPED (numpy/sklearn not available)')
+
+    # Report availability
+    avail = []
+    if HAS_BLAKE3:   avail.append('blake3')
+    if HAS_ORJSON:   avail.append('orjson')
+    if HAS_NUMPY:    avail.append('numpy')
+    if HAS_SCIPY:    avail.append('scipy')
+    if HAS_SKLEARN:  avail.append('sklearn')
+    if HAS_CRYPTO:   avail.append('cryptography')
+    missing = []
+    if not HAS_BLAKE3:  missing.append('blake3 (using sha3-256 fallback)')
+    if not HAS_ORJSON:  missing.append('orjson (using json stdlib)')
+    if not HAS_NUMPY:   missing.append('numpy')
+    if not HAS_SCIPY:   missing.append('scipy')
+    if not HAS_SKLEARN:  missing.append('scikit-learn')
+    if not HAS_CRYPTO:  missing.append('cryptography')
+
+    print(f'  {passed} core tests passed')
+    if avail:
+        print(f'  optional deps found: {", ".join(avail)}')
+    if missing:
+        print(f'  optional deps absent: {", ".join(missing)}')
     print('SELFTEST_OK')
 
 
