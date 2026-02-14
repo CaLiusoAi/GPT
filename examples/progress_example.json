@@ -1,0 +1,7 @@
+{
+  "capability_incoherence": true,
+  "cross_harness_consistency": 0.4,
+  "metamorphic_gain_ratio": 0.5,
+  "public_private_delta_ratio": 1.7,
+  "regression_fraction": 0.12
+}
